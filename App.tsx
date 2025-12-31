@@ -1,6 +1,8 @@
 import './src/utils/shim';
 import React, { useState, useRef, useEffect } from 'react';
-import { View, Text, Switch, TouchableOpacity, ActivityIndicator, ScrollView, Linking, TextInput, ToastAndroid, Platform } from 'react-native';
+import { View, Text, Switch, TouchableOpacity, ActivityIndicator, ScrollView, Linking, TextInput, ToastAndroid, Platform, Image, Animated, Easing } from 'react-native';
+import { Audio } from 'expo-av';
+import { MusicPlayer } from './src/components/MusicPlayer'; 
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { styled } from 'nativewind';
 import { StatusBar as ExpoStatusBar } from 'expo-status-bar';
@@ -16,7 +18,7 @@ import { sendTelegramMessage, formatAccountForTelegram } from './src/core/telegr
 import { calculateRarityScore } from './src/core/utils';
 import { StorageAccessFramework } from 'expo-file-system/legacy';
 import { CustomAlert } from './src/components/CustomAlert';
-import { parseProxyInput, fetchPublicProxies, ProxyNode } from './src/core/proxy';
+import { parseProxyInput, fetchPublicProxies, ProxyNode, checkAllProxies } from './src/core/proxy';
 import { UtilityCard } from './src/components/UtilityCard';
 import { LinearGradient } from 'expo-linear-gradient';
 
@@ -25,11 +27,82 @@ const StyledText = styled(Text);
 const StyledTouch = styled(TouchableOpacity);
 const StyledView = styled(View);
 const StyledTextInput = styled(TextInput);
+import { StatsDashboard } from './src/components/StatsDashboard';
+
+import { LoginScreen } from './src/components/LoginScreen';
 
 type Tab = 'GENERATOR' | 'RESULTS';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<Tab>('GENERATOR');
+  // Authentication State
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [expiryDate, setExpiryDate] = useState<string | undefined>(undefined);
+
+  // --- Garena Clicker State ---
+  const [garenaClicks, setGarenaClicks] = useState(0);
+  const clickAnim = useRef(new Animated.Value(0)).current;
+  const fadeAnim = useRef(new Animated.Value(1)).current;
+  const clickTimer = useRef<NodeJS.Timeout | null>(null);
+  const [clickSound, setClickSound] = useState<Audio.Sound | null>(null);
+
+  // Load Click Sound
+  // Load Click Sound
+  useEffect(() => {
+    async function loadClick() {
+        try {
+            // Fix: Configure audio to play in silent mode/background
+            await Audio.setAudioModeAsync({
+                playsInSilentModeIOS: true,
+                staysActiveInBackground: true,
+                shouldDuckAndroid: true,
+            });
+
+            const { sound } = await Audio.Sound.createAsync(
+                require('./assets/click.mp3') 
+            );
+            setClickSound(sound);
+        } catch(e) { }
+    }
+    loadClick();
+  }, []);
+
+  const handleGarenaClick = async () => {
+      // Play Sound
+      if (clickSound) {
+          try { 
+              await clickSound.stopAsync(); // Stop previous for overlapping clicks
+              await clickSound.playAsync(); 
+          } catch(e) {}
+      }
+      
+      setGarenaClicks(prev => prev + 1);
+
+      // Reset Animation
+      clickAnim.setValue(0);
+      fadeAnim.setValue(1);
+
+      // Animate Up and Fade Out
+      Animated.parallel([
+          Animated.timing(clickAnim, {
+              toValue: -100,
+              duration: 800,
+              useNativeDriver: true,
+              easing: Easing.out(Easing.ease)
+          }),
+          Animated.timing(fadeAnim, {
+              toValue: 0,
+              duration: 800,
+              useNativeDriver: true
+          })
+      ]).start();
+
+      // Reset Timer
+      if (clickTimer.current) clearTimeout(clickTimer.current);
+      clickTimer.current = setTimeout(() => {
+          setGarenaClicks(0);
+      }, 5000);
+  };
   
   const [amount, setAmount] = useState('10');
   const [namePrefix, setNamePrefix] = useState('ZENI');
@@ -52,6 +125,14 @@ export default function App() {
   const [currentIp, setCurrentIp] = useState('Checking...');
   const [showIpDisplay, setShowIpDisplay] = useState(true);
   const [showAppDisplay, setShowAppDisplay] = useState(true);
+  const [isCheckingProxies, setIsCheckingProxies] = useState(false);
+  const [proxyCheckProgress, setProxyCheckProgress] = useState(0);
+  
+  // Analytics
+  const [totalErrors, setTotalErrors] = useState(0);
+  const [sessionStart] = useState(Date.now());
+  const [lifetimeCount, setLifetimeCount] = useState(0);
+  const [fastestTime, setFastestTime] = useState(Infinity);
 
   // Alert State
   const [alertConfig, setAlertConfig] = useState<{visible: boolean, title: string, msg: string, type: 'info' | 'success' | 'error' | 'warning'}>({
@@ -99,11 +180,13 @@ export default function App() {
       }).catch(err => {
           console.error('[ZEXXY] Error loading storage:', err);
       });
-      AsyncStorage.multiGet(['TG_BOT', 'TG_CHAT', 'MIN_RARITY']).then(values => {
+      AsyncStorage.multiGet(['TG_BOT', 'TG_CHAT', 'MIN_RARITY', 'LIFETIME_COUNT', 'FASTEST_TIME']).then(values => {
           if(values[0][1]) setTgBotToken(values[0][1]);
           if(values[1][1]) setTgChatId(values[1][1]);
           if(values[2][1]) setMinRarity(values[2][1]);
-          console.log('[ZEXXY] Loaded Telegram settings');
+          if(values[3][1]) setLifetimeCount(parseInt(values[3][1]) || 0);
+          if(values[4][1]) setFastestTime(parseFloat(values[4][1]) || Infinity);
+          console.log('[ZEXXY] Loaded Settings & Stats');
       }).catch(err => {
           console.error('[ZEXXY] Error loading settings:', err);
       });
@@ -154,6 +237,27 @@ export default function App() {
       const idx = versions.indexOf(gameVersion);
       const nextIdx = (idx + 1) % versions.length;
       setGameVersion(versions[nextIdx]);
+  };
+
+  const handleCheckProxies = async () => {
+      if (proxyList.length === 0) {
+          showAlert("Error", "No proxies to check. Save a list first.", 'error');
+          return;
+      }
+      setIsCheckingProxies(true);
+      setProxyCheckProgress(0);
+      try {
+          const checked = await checkAllProxies(proxyList, (count) => {
+              setProxyCheckProgress(count);
+          });
+          setProxyList(checked);
+          const live = checked.filter(p => p.isLive).length;
+          showAlert("Check Complete", `Found ${live} Live proxies / ${checked.length} Total.`, 'success');
+      } catch (e) {
+         showAlert("Error", "Failed to check proxies.", 'error');
+      } finally {
+          setIsCheckingProxies(false);
+      }
   };
 
   const handleProxyImport = async () => {
@@ -210,6 +314,15 @@ export default function App() {
 
     let totalSuccesses = 0;
     const threadLimit = parseInt(threads) || 1;
+    let proxyIndex = 0;
+    
+    // Simple Round-Robin
+    const getNextProxy = () => {
+        if (proxyList.length === 0) return undefined;
+        const p = proxyList[proxyIndex % proxyList.length];
+        proxyIndex++;
+        return p;
+    };
     
     try {
         let consecutiveFailures = 0;
@@ -219,7 +332,49 @@ export default function App() {
             
             const promises = [];
             for(let i=0; i<thisBatch; i++) {
-                 promises.push(generateAccount(region, namePrefix, passPrefix, isGhost, gameVersion, addLog));
+                 // Measure individual generation time for stats
+                 const p = (async () => {
+                     // Proxy Rotation Logic for this thread
+                     // We try up to 3 different proxies if we get 403s
+                     let currentProxy = useProxy && proxyList.length > 0 ? getNextProxy() : undefined;
+                     let res: AccountData | null = null;
+                     
+                     for (let attempt = 0; attempt < 3; attempt++) {
+                        const startT = Date.now();
+                        try {
+                            // Only use proxy if enabled and list available
+                            res = await generateAccount(
+                                region, 
+                                namePrefix, 
+                                passPrefix, 
+                                isGhost, 
+                                gameVersion, 
+                                addLog,
+                                currentProxy
+                            );
+                            
+                            if (res) {
+                                const dur = Date.now() - startT;
+                                setFastestTime(prev => {
+                                    const newFast = Math.min(prev, dur);
+                                    AsyncStorage.setItem('FASTEST_TIME', String(newFast));
+                                    return newFast;
+                                });
+                                break; // Success
+                            }
+                        } catch (err: any) {
+                             if (err.message === 'PROXY_BANNED' && useProxy) {
+                                  addLog(`[AUTO-ROTATE] Proxy Banned! Switching...`);
+                                  currentProxy = getNextProxy();
+                                  continue; // Retry loop
+                             }
+                             // Other errors, we just stop this thread
+                             break;
+                        }
+                     }
+                     return res;
+                 })();
+                 promises.push(p);
             }
             
             const batchResults = await Promise.all(promises);
@@ -246,6 +401,11 @@ export default function App() {
                 totalSuccesses += validAccounts.length;
                 setResults(prev => [...prev, ...validAccounts]);
                 setGeneratedCount(prev => prev + validAccounts.length);
+                setLifetimeCount(prev => {
+                    const newVal = prev + validAccounts.length;
+                    AsyncStorage.setItem('LIFETIME_COUNT', String(newVal));
+                    return newVal;
+                });
                 try {
                     await saveBatch(validAccounts);
                 } catch (saveErr: any) {
@@ -265,9 +425,10 @@ export default function App() {
                  continue; // Skip the standard delay
             }
             
-            const pending = count - totalSuccesses;
-            if (pending > 0 && generationRef.current) {
-                 await new Promise(r => setTimeout(r, 500)); // Standard 500ms delay between successful batches
+            // Optimized Loop for High Speed (No delays, aggressive refill)
+            if (generationRef.current && (count - totalSuccesses) > 0) {
+                 // Zero delay for maximum speed as requested
+                 await new Promise(r => setTimeout(r, 0)); 
             }
         }
     } catch (err: any) {
@@ -305,6 +466,18 @@ export default function App() {
 
   // --- RENDER ---
   
+  if (!isAuthenticated) {
+      return (
+          <SafeAreaProvider>
+             <ExpoStatusBar style="light" />
+             <LoginScreen onLoginSuccess={(expiry) => {
+                 setIsAuthenticated(true);
+                 if (expiry) setExpiryDate(expiry);
+             }} />
+          </SafeAreaProvider>
+      );
+  }
+
   return (
     <SafeAreaProvider>
     <StyledView className="flex-1 bg-slate-950">
@@ -322,9 +495,14 @@ export default function App() {
          {/* Main Content Area */}
          <StyledView className="flex-1">
              {activeTab === 'GENERATOR' ? (
-                <View className="flex-1 px-5 pt-4">
-                     <ScrollView showsVerticalScrollIndicator={false}>
-                         {/* Header */}
+                <View className="flex-1 bg-slate-950">
+                     {/* Music Player Fixed at Top - Explicit Z-Index */}
+                     <View className="absolute top-2 right-4 z-50 pointer-events-box-none">
+                            <MusicPlayer />
+                     </View>
+
+                     <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 20, paddingTop: 40 }}>
+                          {/* Header */}
                          <View className="items-center mt-6 mb-8">
                             <StyledText className="text-4xl font-black text-white tracking-[4px] uppercase italic">
                                 ZEXXY <StyledText className="text-blue-500">HUB</StyledText>
@@ -346,11 +524,19 @@ export default function App() {
                                 colors={['#f97316', '#ef4444']} 
                              />
                              <UtilityCard 
-                                label="IP Display" 
+                                label="PROXY MODE" 
                                 icon={<Text className="text-lg">🌐</Text>}
-                                value={showIpDisplay}
-                                onValueChange={setShowIpDisplay}
+                                value={useProxy}
+                                onValueChange={(val) => {
+                                    setUseProxy(val);
+                                    if(val) {
+                                        setShowIpDisplay(true);
+                                        // Open manager if list is empty or strictly requested
+                                        if (proxyList.length === 0) setShowProxyManager(true);
+                                    }
+                                }}
                                 colors={['#6366f1', '#3b82f6']} 
+                                onPress={() => setShowProxyManager(true)} // Allow clicking card body to open manager
                              />
                              <View className="w-full h-1" />
                              <UtilityCard 
@@ -359,7 +545,7 @@ export default function App() {
                                 value={showLogs}
                                 onValueChange={setShowLogs}
                                 colors={['#10b981', '#3b82f6']} 
-                             />
+                              />
                              <UtilityCard 
                                 label="Flight Mode" 
                                 icon={<Text className="text-lg">✈️</Text>}
@@ -370,13 +556,35 @@ export default function App() {
                              />
                          </View>
 
-                         {/* IP Display Row (Conditional) */}
-                         {showIpDisplay && (
-                             <View className="flex-row items-center border-b border-slate-900 pb-2 mb-6">
-                                 <View className="w-2 h-2 rounded-full bg-blue-500 mr-2 shadow-[0_0_8px_rgba(59,130,246,1)]" />
+                         {/* IP Display Row (Blur/Reveal) */}
+                         {useProxy && (
+                             <StyledTouch 
+                                activeOpacity={0.7}
+                                onPress={() => setShowIpDisplay(!showIpDisplay)}
+                                className="flex-row items-center border-b border-slate-900 pb-2 mb-6"
+                             >
+                                 <View className={`w-2 h-2 rounded-full ${showIpDisplay ? 'bg-blue-500 shadow-[0_0_8px_rgba(59,130,246,1)]' : 'bg-slate-600'} mr-2`} />
                                  <StyledText className="text-slate-500 text-[10px] font-bold tracking-widest mr-2 uppercase">Live Public IP:</StyledText>
-                                 <StyledText className="text-blue-400 text-xs font-mono font-bold">{currentIp}</StyledText>
-                             </View>
+                                 
+                                 {showIpDisplay ? (
+                                    <StyledText className="text-blue-400 text-xs font-mono font-bold">
+                                        {currentIp || 'Loading...'}
+                                    </StyledText>
+                                 ) : (
+                                    <View className="bg-slate-800/50 px-2 py-0.5 rounded">
+                                        <StyledText className="text-slate-500 text-[10px] font-bold tracking-widest blur-sm">HIDDEN (TAP TO REVEAL)</StyledText>
+                                    </View>
+                                 )}
+
+                                 {/* Only show expiry if revealed */}
+                                 {showIpDisplay && expiryDate && (
+                                     <>
+                                         <View className="w-[1px] h-3 bg-slate-800 mx-2" />
+                                         <StyledText className="text-slate-500 text-[10px] font-bold tracking-widest mr-2 uppercase">Expires:</StyledText>
+                                         <StyledText className="text-pink-400 text-xs font-mono font-bold">{expiryDate}</StyledText>
+                                     </>
+                                 )}
+                             </StyledTouch>
                          )}
 
                          {/* Console Log UI */}
@@ -466,6 +674,33 @@ export default function App() {
                              </Card>
                          )}
                          
+                         {/* Mini Dashboard (Compact) */}
+                         <View className="mb-6 mx-1">
+                             <View className="flex-row justify-between mb-2">
+                                <StyledText className="text-white font-bold text-[10px] uppercase tracking-widest pl-1">Session Analytics</StyledText>
+                                <StyledText className="text-slate-500 font-bold text-[10px] uppercase tracking-widest pr-1">LIFETIME: {lifetimeCount}</StyledText>
+                             </View>
+                             <View className="flex-row">
+                                 {/* Success Card */}
+                                 <View className="flex-1 bg-slate-900 border border-slate-800 rounded-l-xl p-3 items-center border-r-0">
+                                     <StyledText className="text-green-400 font-black text-xl">{generatedCount}</StyledText>
+                                     <StyledText className="text-slate-500 text-[8px] font-bold uppercase tracking-widest mt-1">SUCCESS</StyledText>
+                                 </View>
+                                 
+                                 {/* Failed Card */}
+                                 <View className="flex-1 bg-slate-900 border border-slate-800 p-3 items-center border-x-slate-800/50">
+                                     <StyledText className="text-red-400 font-black text-xl">{totalErrors}</StyledText>
+                                     <StyledText className="text-slate-500 text-[8px] font-bold uppercase tracking-widest mt-1">FAILED</StyledText>
+                                 </View>
+
+                                 {/* Total Card */}
+                                 <View className="flex-1 bg-slate-900 border border-slate-800 rounded-r-xl p-3 items-center border-l-0">
+                                     <StyledText className="text-blue-400 font-black text-xl">{generatedCount + totalErrors}</StyledText>
+                                     <StyledText className="text-slate-500 text-[8px] font-bold uppercase tracking-widest mt-1">TOTAL</StyledText>
+                                 </View>
+                             </View>
+                         </View>
+
                          {/* Main Controls Overlay */}
                          <View className="mb-4">
                              <View className="flex-row justify-between">
@@ -494,19 +729,6 @@ export default function App() {
                                      <StyledText className="text-slate-400 font-bold ml-2 text-[10px] tracking-widest uppercase">GHOST</StyledText>
                                  </View>
                                  
-                                 <View className="flex-row items-center ml-2 border-l border-slate-800 pl-4">
-                                     <Switch 
-                                        value={useProxy} 
-                                        onValueChange={(val) => {
-                                            setUseProxy(val);
-                                            if(val) setShowProxyManager(true);
-                                        }} 
-                                        trackColor={{true: '#3b82f6', false: '#1e293b'}} 
-                                        thumbColor={'#ffffff'} 
-                                     />
-                                     <StyledText className="text-slate-400 font-bold ml-2 text-[10px] tracking-widest uppercase">PROXY</StyledText>
-                                 </View>
-                                 
                                  <StyledTouch 
                                     onPress={cycleVersion}
                                     className="ml-2 bg-slate-800 px-3 py-1.5 rounded-lg border border-slate-700 items-center justify-center min-w-[50px]"
@@ -530,11 +752,28 @@ export default function App() {
                                     className="bg-slate-950 text-white p-4 rounded-xl mb-4 text-xs h-32 border border-slate-800/50"
                                     style={{textAlignVertical: 'top'}}
                                  />
-                                 <View className="flex-row justify-between">
-                                      <StyledTouch onPress={() => handleProxyImport()} className="bg-slate-800 p-3 rounded-xl flex-1 mr-2 border border-slate-700">
-                                          <StyledText className="text-white text-center text-[10px] font-bold uppercase">Public API</StyledText>
-                                      </StyledTouch>
-                                      <StyledTouch onPress={() => handleProxyImport()} className="bg-blue-600 p-3 rounded-xl flex-1 ml-2">
+                                 <View className="mb-4">
+                                     <View className="flex-row justify-between mb-2">
+                                          <StyledTouch onPress={() => handleProxyImport()} className="bg-slate-800 p-3 rounded-xl flex-1 mr-1 border border-slate-700">
+                                              <StyledText className="text-white text-center text-[10px] font-bold uppercase">Public API</StyledText>
+                                          </StyledTouch>
+                                          <StyledTouch onPress={() => handleCheckProxies()} className={`p-3 rounded-xl flex-1 ml-1 border border-slate-700 ${isCheckingProxies ? 'bg-slate-700' : 'bg-purple-600'}`}>
+                                              <StyledText className="text-white text-center text-[10px] font-bold uppercase">
+                                                  {isCheckingProxies ? `Checking ${Math.round(proxyCheckProgress)}%` : 'Check Speed'}
+                                              </StyledText>
+                                          </StyledTouch>
+                                     </View>
+                                     
+                                     {/* Proxy Stats */}
+                                     {proxyList.length > 0 && (
+                                         <View className="flex-row justify-between bg-slate-950/50 p-2 rounded-lg mb-2 border border-slate-800">
+                                             <StyledText className="text-slate-400 text-[10px] font-bold">Total: <StyledText className="text-white">{proxyList.length}</StyledText></StyledText>
+                                             <StyledText className="text-green-400 text-[10px] font-bold">Live: {proxyList.filter(p => p.isLive).length}</StyledText>
+                                             <StyledText className="text-red-400 text-[10px] font-bold">Dead: {proxyList.filter(p => !p.isLive).length}</StyledText>
+                                         </View>
+                                     )}
+
+                                      <StyledTouch onPress={() => handleProxyImport()} className="bg-blue-600 p-3 rounded-xl w-full">
                                           <StyledText className="text-white text-center text-[10px] font-bold uppercase">Save List</StyledText>
                                       </StyledTouch>
                                  </View>
@@ -601,22 +840,55 @@ export default function App() {
              )}
          </StyledView>
 
-         {/* Bottom Navigation Bar */}
-         <View className="bg-slate-900 border-t border-slate-800 flex-row pb-2 pt-2">
+         {/* Bottom Navigation Bar - Improved Layout */}
+         <View className="bg-slate-900 border-t border-slate-800 h-20 flex-row items-center justify-between px-10 pb-2">
              <StyledTouch 
                 onPress={() => setActiveTab('GENERATOR')}
-                className={`flex-1 p-4 items-center justify-center border-b-2 ${activeTab === 'GENERATOR' ? 'border-blue-500' : 'border-transparent'}`}
+                className="items-center justify-center -top-1"
              >
-                 <StyledText className={`font-bold text-xs ${activeTab === 'GENERATOR' ? 'text-blue-500' : 'text-slate-500'}`}>
-                    GENERATOR
+                 <StyledText className={`text-2xl mb-1 ${activeTab === 'GENERATOR' ? 'text-blue-500' : 'text-slate-600'}`}>⚡</StyledText>
+                 <StyledText className={`font-bold text-[10px] tracking-widest ${activeTab === 'GENERATOR' ? 'text-blue-500' : 'text-slate-600'}`}>
+                    GEN
                  </StyledText>
              </StyledTouch>
-             
+
+            {/* Garena Clicker Button - Floating Center */}
+            <View className="items-center relative -top-8">
+                {/* Floating Counter */}
+                {garenaClicks > 0 && (
+                    <Animated.View 
+                       style={{ 
+                           transform: [{ translateY: clickAnim }], 
+                           opacity: fadeAnim,
+                           position: 'absolute',
+                           top: -50,
+                           zIndex: 100
+                       }}
+                    >
+                        <StyledText className="text-yellow-400 font-black text-3xl shadow-lg drop-shadow-[0_4px_4px_rgba(0,0,0,0.5)]">+{garenaClicks}</StyledText>
+                    </Animated.View>
+                )}
+
+                <StyledTouch 
+                   onPress={handleGarenaClick}
+                   activeOpacity={0.9}
+                   className="w-20 h-20 bg-slate-800 rounded-full border-[6px] border-slate-900 items-center justify-center shadow-2xl elevation-10 overflow-hidden"
+                >
+                    <Image 
+                       source={require('./assets/garena.png')} 
+                       style={{ width: '100%', height: '100%' }} 
+                       resizeMode="cover"
+                    />
+                </StyledTouch>
+            </View>
+
+
              <StyledTouch 
                 onPress={() => setActiveTab('RESULTS')}
-                className={`flex-1 p-4 items-center justify-center border-b-2 ${activeTab === 'RESULTS' ? 'border-blue-500' : 'border-transparent'}`}
+                className="items-center justify-center -top-1"
              >
-                 <StyledText className={`font-bold text-xs ${activeTab === 'RESULTS' ? 'text-blue-500' : 'text-slate-500'}`}>
+                 <StyledText className={`text-2xl mb-1 ${activeTab === 'RESULTS' ? 'text-blue-500' : 'text-slate-600'}`}>📝</StyledText>
+                 <StyledText className={`font-bold text-[10px] tracking-widest ${activeTab === 'RESULTS' ? 'text-blue-500' : 'text-slate-600'}`}>
                     RESULTS
                  </StyledText>
              </StyledTouch>

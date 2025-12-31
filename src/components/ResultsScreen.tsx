@@ -21,6 +21,7 @@ export const ResultsScreen = ({ visible, onClose, accounts }: ResultsScreenProps
     const [searchQuery, setSearchQuery] = useState('');
     const [minRarity, setMinRarity] = useState<number>(0);
     const [sortOrder, setSortOrder] = useState<'rarity_desc' | 'rarity_asc' | 'id_asc'>('rarity_desc');
+    const [showFilters, setShowFilters] = useState(false);
 
     const filteredAccounts = useMemo(() => {
         let res = (accounts || []).filter(acc => {
@@ -40,7 +41,7 @@ export const ResultsScreen = ({ visible, onClose, accounts }: ResultsScreenProps
             if (sortOrder === 'rarity_desc') {
                 return calculateRarityScore(b.account_id) - calculateRarityScore(a.account_id);
             } else if (sortOrder === 'rarity_asc') {
-                 return calculateRarityScore(a.account_id) - calculateRarityScore(b.account_id);
+                return calculateRarityScore(a.account_id) - calculateRarityScore(b.account_id);
             } else {
                 return a.account_id.localeCompare(b.account_id);
             }
@@ -101,82 +102,97 @@ export const ResultsScreen = ({ visible, onClose, accounts }: ResultsScreenProps
     };
 
     return (
-        <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
-            <StyledView className="flex-1 bg-slate-950">
-                <View className="p-4 bg-slate-900 border-b border-slate-800 flex-row justify-between items-center pt-6">
-                     <StyledText className="text-xl font-bold text-white">GENERATED ACCOUNTS</StyledText>
-                     <StyledTouch onPress={onClose} className="bg-slate-800 p-2 rounded-full">
-                         <StyledText className="text-slate-400 font-bold px-2">CLOSE</StyledText>
+        <StyledView className="flex-1 bg-slate-950">
+            {/* New Custom Header Layout */}
+            <View className="px-3 bg-slate-900 border-b border-slate-800 pt-2 pb-2">
+                {/* Top Row: Back | Search | Filter */}
+                <View className="flex-row items-center justify-between mb-2">
+                     <StyledTouch onPress={onClose} className="bg-slate-800 p-2 rounded-xl border border-slate-700 mr-2">
+                         <StyledText className="text-slate-400 font-bold text-[10px]">BACK</StyledText>
                      </StyledTouch>
-                </View>
 
-                <View className="p-4">
-                    <Input 
-                        label="Search (ID, UID, Name)" 
-                        value={searchQuery} 
-                        onChangeText={setSearchQuery} 
-                        placeholder="Search..." 
-                    />
-                    
-                    <View className="flex-row items-center mb-4 overflow-hidden">
-                        <StyledText className="text-slate-400 font-bold mr-3 uppercase text-xs">Min Rarity:</StyledText>
-                        <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-                            {[0, 3, 4, 5, 6].map(level => (
-                                <StyledTouch 
-                                    key={level} 
-                                    onPress={() => setMinRarity(level)}
-                                    className={`mr-2 px-4 py-2 rounded-lg border ${minRarity === level ? 'bg-blue-600 border-blue-400' : 'bg-slate-800 border-slate-700'}`}
-                                >
-                                    <StyledText className={`${minRarity === level ? 'text-white' : 'text-slate-400'} font-bold`}>
-                                        {level === 0 ? 'ALL' : `${level}+`}
-                                    </StyledText>
-                                </StyledTouch>
-                            ))}
-                        </ScrollView>
+                     <View className="flex-1 mr-2">
+                         <Input 
+                            label="" 
+                            value={searchQuery} 
+                            onChangeText={setSearchQuery} 
+                            placeholder="Search..." 
+                        />
                     </View>
 
-                    {/* Sorting Controls */}
-                    <View className="flex-row items-center mb-4">
-                        <StyledText className="text-slate-400 font-bold mr-3 uppercase text-xs">Sort By:</StyledText>
-                         <StyledTouch 
-                            onPress={() => setSortOrder('rarity_desc')}
-                            className={`mr-2 px-3 py-1 rounded border ${sortOrder === 'rarity_desc' ? 'bg-purple-600 border-purple-400' : 'bg-slate-800 border-slate-700'}`}
-                        >
-                            <StyledText className="text-white text-xs font-bold">Rare ↓</StyledText>
-                        </StyledTouch>
-                        <StyledTouch 
-                            onPress={() => setSortOrder('rarity_asc')}
-                            className={`mr-2 px-3 py-1 rounded border ${sortOrder === 'rarity_asc' ? 'bg-purple-600 border-purple-400' : 'bg-slate-800 border-slate-700'}`}
-                        >
-                            <StyledText className="text-white text-xs font-bold">Rare ↑</StyledText>
-                        </StyledTouch>
-                        <StyledTouch 
-                            onPress={() => setSortOrder('id_asc')}
-                            className={`mr-2 px-3 py-1 rounded border ${sortOrder === 'id_asc' ? 'bg-purple-600 border-purple-400' : 'bg-slate-800 border-slate-700'}`}
-                        >
-                            <StyledText className="text-white text-xs font-bold">ID A-Z</StyledText>
-                        </StyledTouch>
-                    </View>
+                    <StyledTouch 
+                        onPress={() => setShowFilters(!showFilters)}
+                        className={`h-10 w-10 justify-center items-center rounded-xl border ${showFilters ? 'bg-blue-600 border-blue-500' : 'bg-slate-800 border-slate-700'}`}
+                    >
+                         <StyledText className="text-lg">🌪️</StyledText>
+                    </StyledTouch>
                 </View>
 
-                <FlatList
-                    data={filteredAccounts}
-                    renderItem={renderItem}
-                    keyExtractor={item => item.uid}
-                    contentContainerStyle={{ padding: 16, paddingBottom: 100 }}
-                    ListEmptyComponent={
-                        <View className="items-center justify-center py-10">
-                            <StyledText className="text-slate-600 font-bold text-lg">NO ACCOUNTS FOUND</StyledText>
+                {/* Second Row: Centered Title - Slimmer */}
+                <View className="items-center">
+                    <StyledText className="text-lg font-black text-white tracking-[2px] italic">RESULTS</StyledText>
+                    <StyledText className="text-slate-500 text-[9px] font-bold tracking-widest uppercase">
+                        {filteredAccounts.length} / {accounts.length} ACCOUNTS
+                    </StyledText>
+                </View>
+
+                 {/* Collapsible Filters */}
+                 {showFilters && (
+                    <View className="mt-3 bg-slate-900 p-3 rounded-xl border border-slate-800">
+                        <View className="flex-row items-center mb-4 overflow-hidden">
+                            <StyledText className="text-slate-400 font-bold mr-3 uppercase text-xs">Min Rarity:</StyledText>
+                            <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                                {[0, 3, 4, 5, 6].map(level => (
+                                    <StyledTouch 
+                                        key={level} 
+                                        onPress={() => setMinRarity(level)}
+                                        className={`mr-2 px-4 py-2 rounded-lg border ${minRarity === level ? 'bg-blue-600 border-blue-400' : 'bg-slate-800 border-slate-700'}`}
+                                    >
+                                        <StyledText className={`${minRarity === level ? 'text-white' : 'text-slate-400'} font-bold`}>
+                                            {level === 0 ? 'ALL' : `${level}+`}
+                                        </StyledText>
+                                    </StyledTouch>
+                                ))}
+                            </ScrollView>
                         </View>
-                    }
-                />
-                
-                <View className="absolute bottom-0 w-full bg-slate-900 border-t border-slate-800 p-4">
-                     <StyledText className="text-slate-400 text-center font-bold">
-                         Showing {filteredAccounts.length} / {accounts.length} Accounts
-                     </StyledText>
-                </View>
-            </StyledView>
-        </Modal>
+
+                        {/* Sorting Controls */}
+                        <View className="flex-row items-center">
+                            <StyledText className="text-slate-400 font-bold mr-3 uppercase text-xs">Sort By:</StyledText>
+                                <StyledTouch 
+                                onPress={() => setSortOrder('rarity_desc')}
+                                className={`mr-2 px-3 py-1 rounded border ${sortOrder === 'rarity_desc' ? 'bg-purple-600 border-purple-400' : 'bg-slate-800 border-slate-700'}`}
+                            >
+                                <StyledText className="text-white text-xs font-bold">Rare ↓</StyledText>
+                            </StyledTouch>
+                            <StyledTouch 
+                                onPress={() => setSortOrder('rarity_asc')}
+                                className={`mr-2 px-3 py-1 rounded border ${sortOrder === 'rarity_asc' ? 'bg-purple-600 border-purple-400' : 'bg-slate-800 border-slate-700'}`}
+                            >
+                                <StyledText className="text-white text-xs font-bold">Rare ↑</StyledText>
+                            </StyledTouch>
+                            <StyledTouch 
+                                onPress={() => setSortOrder('id_asc')}
+                                className={`mr-2 px-3 py-1 rounded border ${sortOrder === 'id_asc' ? 'bg-purple-600 border-purple-400' : 'bg-slate-800 border-slate-700'}`}
+                            >
+                                <StyledText className="text-white text-xs font-bold">ID A-Z</StyledText>
+                            </StyledTouch>
+                        </View>
+                    </View>
+                )}
+            </View>
+
+            <FlatList
+                data={filteredAccounts}
+                renderItem={renderItem}
+                keyExtractor={item => item.uid}
+                contentContainerStyle={{ padding: 16, paddingBottom: 100 }}
+                ListEmptyComponent={
+                    <View className="items-center justify-center py-10">
+                        <StyledText className="text-slate-600 font-bold text-lg">NO ACCOUNTS FOUND</StyledText>
+                    </View>
+                }
+            />
+        </StyledView>
     );
 };
