@@ -203,7 +203,7 @@ export class KeyAuth {
 
 // Export a singleton instance or the class
 export const authService = new KeyAuth({
-    name: "ZEXXY GUEST GEN",
-    ownerid: "C7D192dsbY",
+    name: "ADD YOUR APP NAME FROM KEY AUTH,
+    ownerid: "YOUR ID",
     version: "1.0",
 });
