@@ -1,6 +1,6 @@
 # ⚡ ZEXXY HUB - Mobile Account Generator
 
-![Zexxy Hub Banner](https://via.placeholder.com/1200x400/0f172a/3b82f6?text=ZEXXY+HUB+MOBILE)
+![Zexxy Hub Banner](assets/banner.png)
 
 **Zexxy Hub** is a premium, high-performance Android application designed for mass account generation and management. Built with modern web technologies on React Native, it combines a sleek, futuristic UI with robust automation capabilities.
 
