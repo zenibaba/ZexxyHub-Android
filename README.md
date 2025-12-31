@@ -39,7 +39,7 @@
 
 1.  **Clone the repository**
     ```bash
-    git clone https://github.com/YOUR_USERNAME/ZexxyHub-Android.git
+    git clone https://github.com/zenibaba/ZexxyHub-Android.git
     cd ZexxyHub-Android
     ```
 
@@ -69,7 +69,7 @@ eas build -p android --profile preview --local
 
 ## 📄 License
 
-Distributed under the **MIT License**. See `GIT.md` for more information.
+Distributed under the **MIT License**.
 
 ---
 *Developer: @MASTERZENI*
